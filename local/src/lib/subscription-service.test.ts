@@ -5,17 +5,23 @@ import {
   createSubscription,
   deleteSubscription,
   formatSubscription,
+  buildLocalIosClientConfigUrl,
+  buildLocalRuleSetUrl,
   formatSubscriptionDetail,
+  generateSubscriptionIosConfig,
   generateSubscriptionYaml,
   getSubscription,
   listSubscriptions,
   refreshSubscription,
+  resolveSubscriptionRuleSetSource,
   updateSubscription,
   type SubscriptionRow,
 } from "./subscription-service";
 
 const mocks = vi.hoisted(() => ({
   generateClashYaml: vi.fn(),
+  generateClashConfig: vi.fn(),
+  generateIosClientConfig: vi.fn(),
   buildGenerateOptionsFromConfig: vi.fn(),
   getEffectiveTestOptions: vi.fn(),
   buildProxyProvidersFromConfig: vi.fn(),
@@ -42,7 +48,9 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@subboost/core/generator", () => ({
+  generateClashConfig: mocks.generateClashConfig,
   generateClashYaml: mocks.generateClashYaml,
+  generateIosClientConfig: mocks.generateIosClientConfig,
 }));
 
 vi.mock("@subboost/core/subscription/config-utils", () => ({
@@ -649,5 +657,66 @@ describe("local subscription service", () => {
     );
     mocks.buildProxyProvidersFromConfig.mockReturnValueOnce({ provider: { url: "https://example.com/provider.yaml" } });
     await expect(generateSubscriptionYaml("provider-only")).resolves.toMatchObject({ yaml: "mixed-port: 7890\n" });
+  });
+
+  it("generates iOS client configs with self, subscription and rule set URLs", async () => {
+    mocks.generateIosClientConfig.mockReturnValue("[General]\n");
+
+    await expect(generateSubscriptionIosConfig("token-1", "loon")).resolves.toMatchObject({
+      content: "[General]\n",
+      name: "Saved",
+      subscriptionInfo: { upload: 2048, total: 4096 },
+      cacheExpirySeconds: 3600,
+      autoUpdateIntervalSeconds: 86400,
+      isAdmin: true,
+    });
+    const [target, generateOptions, clientOptions] = mocks.generateIosClientConfig.mock.calls[0]!;
+    expect(target).toBe("loon");
+    expect(generateOptions).toEqual({ nodes: [node()] });
+    expect(clientOptions.configUrl).toBe("http://127.0.0.1:3001/api/subscriptions/token-1/loon.conf");
+    expect(clientOptions.nodeSubscriptionUrl).toBe("http://127.0.0.1:3001/api/subscriptions/token-1/config.yaml");
+    expect(clientOptions.resolveRuleSetUrl({ name: "geolocation-!cn", noResolve: false })).toBe(
+      "http://127.0.0.1:3001/api/subscriptions/token-1/rule-sets/geolocation-!cn.list"
+    );
+    expect(mocks.prisma.subscription.update).toHaveBeenCalledWith({
+      where: { id: "sub-1" },
+      data: { lastAccessedAt: expect.any(Date) },
+    });
+
+    mocks.prisma.subscription.findUnique.mockResolvedValueOnce(null);
+    await expect(generateSubscriptionIosConfig("missing", "shadowrocket")).resolves.toBeNull();
+  });
+
+  it("builds iOS client and rule set URLs", () => {
+    expect(buildLocalIosClientConfigUrl("t", "shadowrocket")).toBe("http://127.0.0.1:3001/api/subscriptions/t/shadowrocket.conf");
+    expect(buildLocalRuleSetUrl("t", "a b", true)).toBe("http://127.0.0.1:3001/api/subscriptions/t/rule-sets/a%20b.list?no-resolve=1");
+  });
+
+  it("resolves rule set sources only from the subscription's own rule providers", async () => {
+    mocks.generateClashConfig.mockReturnValue({
+      "rule-providers": {
+        google: { type: "http", behavior: "domain", url: "https://rules.example.com/geosite/google.mrs" },
+        noUrl: { type: "http", behavior: "domain" },
+        noBehavior: { type: "http", url: "https://rules.example.com/x.mrs" },
+      },
+    });
+
+    await expect(resolveSubscriptionRuleSetSource("token-1", "google")).resolves.toEqual({
+      url: "https://rules.example.com/geosite/google.mrs",
+      behavior: "domain",
+    });
+    await expect(resolveSubscriptionRuleSetSource("token-1", "noBehavior")).resolves.toEqual({
+      url: "https://rules.example.com/x.mrs",
+      behavior: "domain",
+    });
+    await expect(resolveSubscriptionRuleSetSource("token-1", "noUrl")).resolves.toBeNull();
+    await expect(resolveSubscriptionRuleSetSource("token-1", "toString")).resolves.toBeNull();
+    expect(mocks.prisma.subscription.update).not.toHaveBeenCalled();
+
+    mocks.generateClashConfig.mockReturnValueOnce({});
+    await expect(resolveSubscriptionRuleSetSource("token-1", "google")).resolves.toBeNull();
+
+    mocks.prisma.subscription.findUnique.mockResolvedValueOnce(null);
+    await expect(resolveSubscriptionRuleSetSource("missing", "google")).resolves.toBeNull();
   });
 });

@@ -1,5 +1,6 @@
 "use client";
 import { SubscriptionQrButton } from "@subboost/ui/product/subscription/subscription-qr-code";
+import { IosClientLinksMenu } from "@subboost/ui/product/subscription/ios-client-links";
 
 import * as React from "react";
 import Link from "next/link";
@@ -569,6 +570,7 @@ function SubscriptionRow({
             </>
           )}
         </Button>
+        <IosClientLinksMenu subscriptionUrl={sub.subscriptionUrl} />
         <Button
           variant="ghost"
           size="sm"

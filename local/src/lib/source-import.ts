@@ -251,6 +251,19 @@ export async function importSourceUrlDirect(request: SourceImportRequest): Promi
   });
 }
 
+/**
+ * 以订阅源相同的 SSRF 防护拉取公网文本（规则集转换等场景复用）
+ */
+export async function fetchPublicTextDirect(request: {
+  url: string;
+  userAgent: string;
+  timeoutMs: number;
+  maxBytes: number;
+}): Promise<SourceImportTransportResult> {
+  const allowUnsafeSubscriptionSources = await getAllowUnsafeSubscriptionSources();
+  return fetchTextDirect({ ...request, purpose: "content" }, allowUnsafeSubscriptionSources);
+}
+
 export async function fetchSourceUserInfoHeadersDirect(source: {
   userinfoUrl?: string;
   userinfoUserAgent?: string;

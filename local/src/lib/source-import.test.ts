@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchSourceUserInfoHeadersDirect, importSourceUrlDirect } from "./source-import";
+import { fetchPublicTextDirect, fetchSourceUserInfoHeadersDirect, importSourceUrlDirect } from "./source-import";
 
 const mocks = vi.hoisted(() => ({
   getAllowUnsafeSubscriptionSources: vi.fn(),
@@ -458,6 +458,29 @@ describe("local source import transport", () => {
       content: "ss://node",
     });
     expect(mocks.getAllowUnsafeSubscriptionSources).toHaveBeenCalledTimes(1);
+  });
+
+  it("fetches public text with the same SSRF guard for rule set conversion", async () => {
+    mocks.getAllowUnsafeSubscriptionSources.mockResolvedValue(true);
+    vi.mocked(globalThis.fetch).mockResolvedValueOnce(response("+.example.com\n", { status: 200 }));
+
+    await expect(
+      fetchPublicTextDirect({
+        url: "https://rules.example.com/geosite/a.list",
+        userAgent: "SubBoost-RuleSet/1.0",
+        timeoutMs: 1000,
+        maxBytes: 1024,
+      })
+    ).resolves.toMatchObject({ ok: true, content: "+.example.com\n" });
+    expect(globalThis.fetch).toHaveBeenLastCalledWith(
+      "https://rules.example.com/geosite/a.list",
+      expect.objectContaining({ method: "GET", headers: expect.objectContaining({ "User-Agent": "SubBoost-RuleSet/1.0" }) })
+    );
+
+    mocks.getAllowUnsafeSubscriptionSources.mockResolvedValue(false);
+    await expect(
+      fetchPublicTextDirect({ url: "http://127.0.0.1/rules.list", userAgent: "ua", timeoutMs: 1000, maxBytes: 1024 })
+    ).resolves.toMatchObject({ ok: false, publicReason: "禁止访问本机或内网地址" });
   });
 
   it("returns userinfo headers with HEAD and skips when no userinfo URL is configured", async () => {

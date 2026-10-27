@@ -38,6 +38,9 @@ import { isMihomoSupportedProxyNode, normalizeMihomoVlessForGeneration } from ".
 import { getValidDialerRelayGroupNames } from "../subscription/dialer-relay-group-names";
 import { chooseFallbackPolicyTarget, withBuiltinPolicyTargets } from "./policy-targets";
 import { resolveGroupListenerEntries, type GroupListenerTargetResolution } from "./group-listeners";
+import type { IosClientConfigOptions, IosClientTarget } from "./ios-client-shared";
+import { generateLoonConfigFromClash } from "./loon";
+import { generateShadowrocketConfigFromClash } from "./shadowrocket";
 
 export interface GenerateOptions {
   nodes: ParsedNode[];
@@ -599,6 +602,20 @@ export function generateClashConfig(options: GenerateOptions): ClashConfig {
 export function generateClashYaml(options: GenerateOptions): string {
   const config = generateClashConfig(options);
   return configToYaml(config);
+}
+
+/**
+ * 生成 Loon / Shadowrocket 原生配置（基于同一份 Clash 配置转换，代理组/规则/中转保持一致）
+ */
+export function generateIosClientConfig(
+  target: IosClientTarget,
+  options: GenerateOptions,
+  clientOptions: IosClientConfigOptions
+): string {
+  const config = generateClashConfig(options);
+  return target === "loon"
+    ? generateLoonConfigFromClash(config, clientOptions)
+    : generateShadowrocketConfigFromClash(config, clientOptions);
 }
 
 export {

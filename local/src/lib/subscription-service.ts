@@ -1,5 +1,6 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { generateClashYaml } from "@subboost/core/generator";
+import { generateClashConfig, generateClashYaml, generateIosClientConfig } from "@subboost/core/generator";
+import type { IosClientTarget } from "@subboost/core/generator/ios-client-shared";
 import { buildGenerateOptionsFromConfig, getEffectiveTestOptions } from "@subboost/core/subscription/config-utils";
 import { buildProxyProvidersFromConfig } from "@subboost/core/subscription/proxy-providers";
 import type { SubscriptionResponseInfo } from "@subboost/core/subscription/subscription-response-info";
@@ -430,19 +431,25 @@ export async function refreshSubscription(ownerId: string, id: string) {
   };
 }
 
-export async function generateSubscriptionYaml(token: string): Promise<GeneratedSubscriptionYaml | null> {
+async function loadSubscriptionForGeneration(token: string) {
   const row = await prisma.subscription.findUnique({ where: { token }, include: { autoUpdateState: true } });
   if (!row) return null;
   const secrets = readSubscriptionSecrets(row);
   const { testUrl, testInterval } = getEffectiveTestOptions(secrets.config);
   const proxyProviders = buildProxyProvidersFromConfig(secrets.config, { testUrl, testInterval });
   if (secrets.nodes.length === 0 && !proxyProviders) return null;
-  const yaml = generateClashYaml(
-    buildGenerateOptionsFromConfig(secrets.config, {
-      nodes: secrets.nodes,
-      proxyProviders,
-    })
-  );
+  const generateOptions = buildGenerateOptionsFromConfig(secrets.config, {
+    nodes: secrets.nodes,
+    proxyProviders,
+  });
+  return { row, secrets, generateOptions };
+}
+
+export async function generateSubscriptionYaml(token: string): Promise<GeneratedSubscriptionYaml | null> {
+  const loaded = await loadSubscriptionForGeneration(token);
+  if (!loaded) return null;
+  const { row, secrets, generateOptions } = loaded;
+  const yaml = generateClashYaml(generateOptions);
   await prisma.subscription.update({ where: { id: row.id }, data: { lastAccessedAt: new Date() } });
   return {
     yaml,
@@ -452,4 +459,55 @@ export async function generateSubscriptionYaml(token: string): Promise<Generated
     autoUpdateIntervalSeconds: row.autoUpdateInterval,
     isAdmin: true,
   };
+}
+
+export function buildLocalIosClientConfigUrl(token: string, target: IosClientTarget): string {
+  return `${getAppUrl()}/api/subscriptions/${token}/${target}.conf`;
+}
+
+export function buildLocalRuleSetUrl(token: string, providerName: string, noResolve: boolean): string {
+  const query = noResolve ? "?no-resolve=1" : "";
+  return `${getAppUrl()}/api/subscriptions/${token}/rule-sets/${encodeURIComponent(providerName)}.list${query}`;
+}
+
+export type GeneratedSubscriptionIosConfig = Omit<GeneratedSubscriptionYaml, "yaml"> & { content: string };
+
+export async function generateSubscriptionIosConfig(
+  token: string,
+  target: IosClientTarget
+): Promise<GeneratedSubscriptionIosConfig | null> {
+  const loaded = await loadSubscriptionForGeneration(token);
+  if (!loaded) return null;
+  const { row, secrets, generateOptions } = loaded;
+  const content = generateIosClientConfig(target, generateOptions, {
+    configUrl: buildLocalIosClientConfigUrl(token, target),
+    nodeSubscriptionUrl: buildLocalSubscriptionUrl(token),
+    resolveRuleSetUrl: ({ name, noResolve }) => buildLocalRuleSetUrl(token, name, noResolve),
+  });
+  await prisma.subscription.update({ where: { id: row.id }, data: { lastAccessedAt: new Date() } });
+  return {
+    content,
+    name: row.name,
+    subscriptionInfo: secrets.subscriptionInfo,
+    cacheExpirySeconds: CACHE_TTL_SECONDS,
+    autoUpdateIntervalSeconds: row.autoUpdateInterval,
+    isAdmin: true,
+  };
+}
+
+/**
+ * 按订阅 token 查找 rule-provider 的上游地址；只允许订阅自身配置里出现的规则集，避免成为任意 URL 代理
+ */
+export async function resolveSubscriptionRuleSetSource(
+  token: string,
+  providerName: string
+): Promise<{ url: string; behavior: string } | null> {
+  const loaded = await loadSubscriptionForGeneration(token);
+  if (!loaded) return null;
+  const providers = generateClashConfig(loaded.generateOptions)["rule-providers"] ?? {};
+  if (!Object.prototype.hasOwnProperty.call(providers, providerName)) return null;
+  const provider = providers[providerName];
+  return typeof provider?.url === "string" && provider.url
+    ? { url: provider.url, behavior: String(provider.behavior || "domain") }
+    : null;
 }

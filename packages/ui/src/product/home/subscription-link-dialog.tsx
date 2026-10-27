@@ -10,6 +10,7 @@ import { Switch } from "@subboost/ui/components/ui/switch";
 import { SwitchField } from "@subboost/ui/components/ui/switch-field";
 import { SmartNodeMatchingHelp } from "@subboost/ui/components/subscription/smart-node-matching-help";
 import { SubscriptionQrCode } from "@subboost/ui/product/subscription/subscription-qr-code";
+import { IosClientLinkList } from "@subboost/ui/product/subscription/ios-client-links";
 import {
   Dialog,
   DialogContent,
@@ -174,6 +175,8 @@ export function SubscriptionLinkDialog({
                 </IconButton>
               </div>
             </div>
+
+            <IosClientLinkList subscriptionUrl={subscriptionUrl} />
 
             <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/30 text-sm">
               <p className="text-green-200 font-medium mb-1">
